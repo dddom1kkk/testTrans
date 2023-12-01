@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Translator</title>
     <link rel="stylesheet" href="speak-to-translate-style.css" />
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="speak-to-translate.js" defer></script>
   </head>
   <body>
     <nav>
@@ -97,14 +99,8 @@
       <div class="settings-section">
         <button id="edit">edit later</button>
       </div>
-
-      <button id="startRecording">Start Recording</button>
-      <button id="stopRecording" disabled>Stop Recording</button>
-      <p id="transcription">www</p>
-
-      <script src="speak-to-translate.js"></script>
-
-      <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
+      <button id="recordButton">Start Recording</button>
+      <div id="textOutput"></div>
     </div>
   </body>
 </html>

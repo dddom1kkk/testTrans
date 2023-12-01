@@ -1,109 +1,135 @@
-document.addEventListener('DOMContentLoaded', () => {
-  let mediaRecorder;
-  let audioChunks = [];
+function showSettings() {
 
-const apiKey = 'LNI8R9zMx6-Z_yx41-9D2wuAJxk2I_IAafgIhWFbycWW';
-const url = 'https://api.us-south.speech-to-text.watson.cloud.ibm.com/instances/857622cd-52d5-49eb-b441-155b56ba1154'; //
+  var settings = document.getElementById("edit");
 
-const startRecordingButton = document.getElementById('startRecording');
-      const stopRecordingButton = document.getElementById('stopRecording');
-      const transcriptionOutput = document.getElementById('transcription');
+  console.log(settings.style.display)
+  
+  if (settings.style.display == "none" || settings.style.display.length == 0)
+    settings.style.display = "block";
+  else
+    settings.style.display = "none";
 
-      startRecordingButton.addEventListener('click', startRecording);
-      stopRecordingButton.addEventListener('click', stopRecording);
+}
 
-      async function startRecording() {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+const socket = io.connect('https://dent-torpid-slug.glitch.me');
 
-        mediaRecorder = new MediaRecorder(stream);
-
-        // audioChunks = [];
-
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0) {
-            audioChunks.push(event.data);
-          }
-        };
-
-        mediaRecorder.onstop = () => {
-
-          console.log('Audio chunks length:', audioChunks.length);
-          console.log('Audio chunks:', audioChunks);
-
-          if (audioChunks.length > 0) {
-            const audioBlob = new Blob(audioChunks, { type: audioChunks[0].type });
-            const formData = new FormData();
-            formData.append('audio', audioBlob, 'recording.' + audioBlob.type.split('/')[1]);
-
-          sendToSpeechToText(formData);
-          }else {
-            console.warn('No audio data captured.');
-          }
-        };
-
-        startRecordingButton.disabled = true;
-        stopRecordingButton.disabled = false;
-
-        mediaRecorder.start();
-      }
-
-      function stopRecording() {
-        if (mediaRecorder && mediaRecorder.state === 'recording') {
-          mediaRecorder.stop();
-        }
-
-        startRecordingButton.disabled = false;
-        stopRecordingButton.disabled = true;
-      }
-
-      async function sendToSpeechToText(formData) {
-        try {
-          const response = await fetch(`${url}/v1/recognitions`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `apikey:${apiKey}`
-            },
-            body: formData
-          });
-
-          if (!response.ok) {
-            console.error('Error from IBM Watson API:', response.statusText);
-      const data = await response.json(); // Log additional information
-      console.log('Additional information from IBM Watson API:', data);
-            throw new Error(`HTTP error! Status: ${response.status}`);
-          }
-
-          const data = await response.json();
-          console.log(data);
-
-          // Display the transcription in your UI
-          transcriptionOutput.textContent = data.results[0].alternatives[0].transcript;
-        } catch (error) {
-          console.error('There was a problem with the fetch operation:', error);
-        }
-      }
+// Listener for receiving transcribed text from the server
+socket.on('transcription', (transcribedText) => {
+    document.getElementById('textOutput').innerText = transcribedText;
 });
 
+// (Optional) Listener for transcription errors
+socket.on('transcriptionError', (error) => {
+    console.error('Transcription error:', error);
+    document.getElementById('textOutput').innerText = 'Error: ' + error.message;
+});
 
-// fetch(`${url}/v1/recognitions`, {
-//   method: 'POST',
-//   // mode: 'cors',
-//   headers: {
-//     // 'Content-Type' : 'application/x-www-form-urlencoded; charset=UTF-8',
-//     // 'Content-Type': 'audio/l16',
-//     'Content-Type': 'audio/l16',
-//     'Authorization': 'Basic ' + btoa('apikey:LNI8R9zMx6-Z_yx41-9D2wuAJxk2I_IAafgIhWFbycWW')
-//   }
-// })
-//   .then(response => {
-//     if (!response.ok) {
-//       throw new Error('Network response was not ok');
-//     }
-//     return response.json();
-//   })
-//   .then(data => {
-//     console.log(data);
-//   })
-//   .catch(error => {
-//     console.error('There was a problem with the fetch operation:', error);
-//   });
+let audioContext;
+let mediaStream;
+let isRecording = false;
+let audioWorkletNode;
+let audioDataBuffer = [];
+
+document.getElementById('recordButton').addEventListener('click', toggleRecording);
+
+function toggleRecording() {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
+}
+
+function startRecording() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    alert('Your browser does not support audio input');
+    return;
+  }
+
+  navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    .then(stream => {
+      audioContext = new AudioContext();
+      mediaStream = stream;
+
+      audioContext.audioWorklet.addModule('audio-processor.js').then(() => {
+          const mediaStreamSource = audioContext.createMediaStreamSource(stream);
+          audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+
+          mediaStreamSource.connect(audioWorkletNode);
+          // audioWorkletNode.connect(audioContext.destination);
+
+          audioWorkletNode.port.onmessage = (event) => {
+            processAudio(event.data);
+          };
+
+          // If you need to send data back from the processor
+          // audioWorkletNode.port.onmessage = (event) => { ... };
+
+          updateUIForRecording(true);
+      });
+  })
+  .catch(error => {
+      console.error('Error accessing media devices.', error);
+  });
+}
+
+function stopRecording() {
+
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(track => track.stop());
+  }
+  if (audioContext) {
+    audioContext.close();
+  }
+  if (audioWorkletNode) {
+    audioWorkletNode.disconnect();
+  }
+
+  if (audioDataBuffer.length > 0) {
+      const combinedData = combineAudioData(audioDataBuffer);
+      const convertedData = convertTo16BitPCM(combinedData);
+      socket.emit('audioData', convertedData);
+      audioDataBuffer = []; // Reset the buffer
+  }
+
+  updateUIForRecording(false);
+}
+
+function processAudio(audioData) {
+
+  audioDataBuffer.push(new Float32Array(audioData));
+
+}
+
+function combineAudioData(bufferArray) {
+
+  let totalLength = bufferArray.reduce((acc, val) => acc + val.length, 0);
+  let result = new Float32Array(totalLength);
+  let offset = 0;
+  for (let data of bufferArray) {
+      result.set(data, offset);
+      offset += data.length;
+  }
+  return result;
+
+}
+
+function convertTo16BitPCM(float32Array) {
+  let pcmData = new Int16Array(float32Array.length);
+  for (let i = 0; i < float32Array.length; i++) {
+      const s = Math.max(-1, Math.min(1, float32Array[i]));
+      pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return pcmData.buffer;
+}
+
+function updateUIForRecording(isRecordingNow) {
+  const recordButton = document.getElementById('recordButton');
+  if (isRecordingNow) {
+    recordButton.innerText = 'Stop Recording';
+    isRecording = true;
+  } else {
+    recordButton.innerText = 'Start Recording';
+    isRecording = false;
+  }
+}
