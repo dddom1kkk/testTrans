@@ -13,12 +13,10 @@ function showSettings() {
 
 const socket = io.connect('https://dent-torpid-slug.glitch.me');
 
-// Listener for receiving transcribed text from the server
 socket.on('transcription', (transcribedText) => {
     document.getElementById('textOutput').innerText = transcribedText;
 });
 
-// (Optional) Listener for transcription errors
 socket.on('transcriptionError', (error) => {
     console.error('Transcription error:', error);
     document.getElementById('textOutput').innerText = 'Error: ' + error.message;
